@@ -44,11 +44,21 @@ server.
 - `recognize_rtsp.py` (`sur-recognize.service`) - detection pipeline
 - `dashboard/app.py` (`sur-dashboard.service`) - web dashboard, port 8080
 - `telegram_bot.py` (`sur-telegram-bot.service`) - self-registration bot
+- `stream_watchdog.py` (`stream-watchdog.timer`, every 3 min) - verifies a
+  frame is actually readable from mediamtx (not just that processes are
+  alive), restarts the RPi's camera-rtsp and sends a Telegram alert after
+  3 consecutive failures, and a recovery message once it's back
+- `duck.sh` (`duckdns.timer`, every 5 min, `/opt/duckdns/`) - keeps a
+  DuckDNS hostname pointed at this server's current public IP, for the
+  case a router port-forward is set up for external access
 
-Server systemd units aren't checked in (they're trivial - `Type=simple`,
-`Restart=always`, `WorkingDirectory=/home/server/sur-floders`,
+Server systemd units aren't checked in (they're trivial - `Type=simple`
+or `Type=oneshot`+timer, `Restart=always`,
+`WorkingDirectory=/home/server/sur-floders`,
 `ExecStart=/usr/bin/python3 <script>`); recreate them from that pattern
-if redeploying from scratch.
+if redeploying from scratch. All services are `enabled` (survive a
+reboot); `sur-recognize.service` additionally binds to `mediamtx.service`
+so it can't start (or stays stopped) without it.
 
 ## Setup
 
