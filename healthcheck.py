@@ -2,10 +2,16 @@
 
 Verifies, in order: config/env load correctly, required Python packages are
 importable, the known-faces directory has usable data, the sqlite schema is
-present, the camera-rtsp/recognize/dashboard sysvinit services are active, the
-RTSP stream is actually readable, the dashboard HTTP API responds, and (if
-configured) the Telegram bot token is valid. Exits non-zero on the first
-hard failure so `make verify` fails loudly instead of silently.
+present, the recognize/dashboard/telegram-bot systemd services are active
+here on the server and the camera-rtsp/greet-audio-feeder sysvinit services
+are active on the RPi (checked over SSH), the RTSP stream is actually
+readable, the dashboard HTTP API responds, and (if configured) the Telegram
+bot token is valid. Exits non-zero on the first hard failure so `make
+verify` fails loudly instead of silently.
+
+Run this on the server - it's the machine mediamtx, recognition, and the
+dashboard actually run on (see README.md "What runs where"). The RPi is
+input-only and checked remotely.
 """
 
 import importlib
@@ -82,28 +88,55 @@ def check_db():
     return f"tables present: {sorted(tables)}"
 
 
-def _initd_active(service):
-    """This board runs sysvinit, not systemd - check via the service's own
-    init script (LSB 'status' action) rather than systemctl."""
+def _systemd_active(service):
     result = subprocess.run(
-        [f"/etc/init.d/{service}", "status"],
+        ["systemctl", "is-active", service],
         capture_output=True, text=True
+    )
+    status = result.stdout.strip()
+    if status != "active":
+        raise RuntimeError(status or "inactive")
+    return status
+
+
+RPI_HOST = "192.168.88.157"
+
+
+def _rpi_initd_active(service):
+    """The RPi runs sysvinit, not systemd - check via SSH + the service's
+    own init script (LSB 'status' action)."""
+    result = subprocess.run(
+        ["ssh", "-o", "ConnectTimeout=5", f"root@{RPI_HOST}",
+         f"/etc/init.d/{service} status"],
+        capture_output=True, text=True, timeout=10,
     )
     if result.returncode != 0:
         raise RuntimeError((result.stdout + result.stderr).strip() or "not running")
     return (result.stdout or "running").strip()
 
 
-def check_camera_rtsp_service():
-    return _initd_active("camera-rtsp")
+def check_mediamtx_service():
+    return _systemd_active("mediamtx")
 
 
 def check_recognize_service():
-    return _initd_active("sur-recognize")
+    return _systemd_active("sur-recognize")
 
 
 def check_dashboard_service():
-    return _initd_active("sur-dashboard")
+    return _systemd_active("sur-dashboard")
+
+
+def check_telegram_bot_service():
+    return _systemd_active("sur-telegram-bot")
+
+
+def check_camera_rtsp_service():
+    return _rpi_initd_active("camera-rtsp")
+
+
+def check_greet_feeder_service():
+    return _rpi_initd_active("greet-audio-feeder")
 
 
 def check_rtsp_stream():
@@ -182,9 +215,12 @@ def main():
     check("ffmpeg/ffprobe available", check_ffmpeg)
     check("known_faces has usable data", check_known_faces)
     check("faces.db schema", check_db)
-    check("camera-rtsp active", check_camera_rtsp_service)
-    check("sur-recognize.service active", check_recognize_service)
-    check("sur-dashboard.service active", check_dashboard_service)
+    check("mediamtx.service active (server)", check_mediamtx_service)
+    check("sur-recognize.service active (server)", check_recognize_service)
+    check("sur-dashboard.service active (server)", check_dashboard_service)
+    check("sur-telegram-bot.service active (server)", check_telegram_bot_service)
+    check("camera-rtsp active (rpi, via ssh)", check_camera_rtsp_service)
+    check("greet-audio-feeder active (rpi, via ssh)", check_greet_feeder_service)
     check("RTSP stream readable", check_rtsp_stream)
     check("dashboard HTTP API responds", check_dashboard_http)
     warn("Telegram bot reachable", check_telegram)
