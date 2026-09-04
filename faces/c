@@ -1,0 +1,23 @@
+import cv2
+
+name = input("Enter name: ")
+
+cap = cv2.VideoCapture("udp://127.0.0.1:5004")
+
+while True:
+    ret, frame = cap.read()
+
+    if not ret:
+        continue
+
+    cv2.imshow("Camera", frame)
+
+    key = cv2.waitKey(1)
+
+    if key == ord('s'):
+        cv2.imwrite(f"faces/{name}.jpg", frame)
+        print(f"Saved faces/{name}.jpg")
+        break
+
+cap.release()
+cv2.destroyAllWindows()

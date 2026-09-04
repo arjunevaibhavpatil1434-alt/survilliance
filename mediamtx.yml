@@ -1,0 +1,77 @@
+# --- Auth (added by Claude, 2026-09-04) ---
+# Default (no authInternalUsers) is wide open - any user, any IP, every
+# permission. Fine while everything is LAN/Tailscale-only, not fine once
+# a router forwards a port here for public internet access. Two rules:
+#   - "any" stays password-free but restricted to localhost/LAN/Tailscale,
+#     so nothing already talking to mediamtx from those networks needs
+#     credentials (the RPi's publish, recognize_rtsp.py/dashboard.py's
+#     local reads, Tailscale-based remote access).
+#   - "public" requires a password and can only read/playback, not
+#     publish - so a port-forwarded connection from the open internet can
+#     view the stream but can't inject a fake one.
+# Set PUBLIC_RTSP_PASSWORD below to your own value before deploying -
+# this is a template, not the live config (which lives outside this repo
+# at /opt/mediamtx/mediamtx.yml on the server).
+authInternalUsers:
+  - user: any
+    pass:
+    ips: ['127.0.0.1/32', '192.168.88.0/24', '100.64.0.0/10']
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+      - action: metrics
+      - action: pprof
+
+  - user: public
+    pass: PUBLIC_RTSP_PASSWORD
+    ips: []
+    permissions:
+      - action: read
+      - action: playback
+
+paths:
+
+  cam01:
+    source: udp+mpegts://0.0.0.0:5000
+    # --- Recording (added by Claude, 2026-09-03) ---
+    # Continuous segmented recording of the camera feed, persisted here on
+    # the server (the camera source device has very little free storage,
+    # nowhere near enough for this). Segment boundaries double as the
+    # granularity for tying a face-detect detection event to the recording
+    # that covers it - see segments-index.log written by
+    # on-segment-complete.sh below, or just match by filename timestamp
+    # under recordPath.
+    record: yes
+    recordPath: /srv/camera_recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+    recordFormat: fmp4
+    recordSegmentDuration: 5m
+    recordDeleteAfter: 168h
+    runOnRecordSegmentComplete: /opt/mediamtx/on-segment-complete.sh
+
+  cam02:
+    source: publisher
+    # --- Recording (added by Claude, 2026-09-04) ---
+    # RPi4's camera feed (pushed here via camera_rtsp_server.py's
+    # rpicam-vid|ffmpeg pipeline - see that file, and
+    # config.yaml/recognize_rtsp.py here for the face-recognition side
+    # reading this same path). Same segmented-recording setup as cam01:
+    # match a KNOWN/UNKNOWN FACE line in sur-floders/logs/events.log to
+    # its recording via segments-index.log or the recordPath filename
+    # timestamp.
+    record: yes
+    recordPath: /srv/camera_recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+    recordFormat: fmp4
+    recordSegmentDuration: 5m
+    recordDeleteAfter: 168h
+    runOnRecordSegmentComplete: /opt/mediamtx/on-segment-complete.sh
+
+  audio01:
+    source: udp+mpegts://0.0.0.0:5001
+
+  audio02:
+    source: publisher
+
+  av01:
+    source: udp+mpegts://0.0.0.0:5002

@@ -1,0 +1,222 @@
+import cv2
+import face_recognition
+import sqlite3
+import os
+import time
+from datetime import datetime
+
+# Configuration
+RTSP_URL = "rtsp://127.0.0.1:8554/cam01"
+
+BASE_DIR = "/home/server/sur-floders"
+KNOWN_DIR = os.path.join(BASE_DIR, "known_faces")
+UNKNOWN_DIR = os.path.join(BASE_DIR, "unknown_faces")
+LOG_FILE = os.path.join(BASE_DIR, "logs", "events.log")
+DB_FILE = os.path.join(BASE_DIR, "faces.db")
+
+os.makedirs(UNKNOWN_DIR, exist_ok=True)
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
+# Database
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_name TEXT,
+    event_type TEXT NOT NULL,
+    image_path TEXT,
+    timestamp TEXT NOT NULL
+)
+""")
+
+conn.commit()
+
+# Logging
+def write_log(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with open(LOG_FILE, "a") as f:
+        f.write(f"[{timestamp}] {message}\n")
+
+# Save to Database
+def save_event(person_name, event_type, image_path=None):
+    cursor.execute(
+        """
+        INSERT INTO events
+        (person_name, event_type, image_path, timestamp)
+        VALUES (?, ?, ?, datetime('now'))
+        """,
+        (person_name, event_type, image_path)
+    )
+
+    conn.commit()
+
+# Load Faces
+print("Loading known faces...")
+
+known_encodings = []
+known_names = []
+
+for person in os.listdir(KNOWN_DIR):
+
+    person_dir = os.path.join(KNOWN_DIR, person)
+
+    if not os.path.isdir(person_dir):
+        continue
+
+    for image_file in os.listdir(person_dir):
+
+        image_path = os.path.join(person_dir, image_file)
+
+        try:
+            image = face_recognition.load_image_file(image_path)
+
+            encodings = face_recognition.face_encodings(image)
+
+            if encodings:
+                known_encodings.append(encodings[0])
+                known_names.append(person)
+
+                print(f"Loaded: {image_file}")
+
+        except Exception as e:
+            print(f"Error loading {image_file}: {e}")
+
+print(f"\nLoaded {len(known_encodings)} known face(s)\n")
+
+# Face Detector
+face_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades +
+    "haarcascade_frontalface_default.xml"
+)
+
+# RTSP Stream
+cap = cv2.VideoCapture(
+    RTSP_URL,
+    cv2.CAP_FFMPEG
+)
+
+print("Checking stream...")
+
+time.sleep(2)
+
+print("isOpened =", cap.isOpened())
+
+ret, frame = cap.read()
+
+print("First frame =", ret)
+
+if ret:
+    print("Frame shape =", frame.shape)
+
+if not cap.isOpened():
+    print("Unable to connect to RTSP stream")
+    exit()
+
+if not ret:
+    print("Connected but no frame received")
+    exit()
+
+print("Connected to RTSP stream")
+
+last_seen = {}
+
+COOLDOWN = 30
+
+last_unknown_time = 0
+
+while True:
+
+    ret, frame = cap.read()
+
+    if not ret:
+        continue
+
+    gray = cv2.cvtColor(
+        frame,
+        cv2.COLOR_BGR2GRAY
+    )
+
+    faces = face_cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(60, 60)
+    )
+
+    for (x, y, w, h) in faces:
+
+        face_img = frame[y:y+h, x:x+w]
+
+        rgb_face = cv2.cvtColor(
+            face_img,
+            cv2.COLOR_BGR2RGB
+        )
+
+        encodings = face_recognition.face_encodings(rgb_face)
+
+        if len(encodings) == 0:
+            continue
+
+        face_encoding = encodings[0]
+
+        matches = face_recognition.compare_faces(
+            known_encodings,
+            face_encoding,
+            tolerance=0.55
+        )
+
+if True in matches:
+
+    idx = matches.index(True)
+
+    name = known_names[idx]
+
+    current_time = time.time()
+
+    print(f"Known Face: {name}")
+
+    if (
+        name not in last_seen
+        or
+        current_time - last_seen[name] > COOLDOWN
+    ):
+
+        write_log(
+            f"KNOWN FACE: {name}"
+        )
+
+        save_event(
+            name,
+            "KNOWN"
+        )
+
+                current_time = time.time()
+
+            if current_time - last_unknown_time > 10:
+
+                filename = os.path.join(
+                    UNKNOWN_DIR,
+                    f"unknown_{int(current_time)}.jpg"
+                )
+
+                cv2.imwrite(
+                    filename,
+                    frame
+                )
+
+                print("Unknown Face")
+
+                write_log(
+                    f"UNKNOWN FACE: {filename}"
+                )
+
+                save_event(
+                    "Unknown",
+                    "UNKNOWN",
+                    filename
+                )
+
+                last_unknown_time = current_time

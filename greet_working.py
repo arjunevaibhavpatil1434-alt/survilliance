@@ -1,0 +1,257 @@
+import os
+import cv2
+import time
+import face_recognition
+from ultralytics import YOLO
+
+# =====================================
+# CONFIGURATION
+# =====================================
+
+RTSP_URL = "rtsp://192.168.88.249:8554/cam01"
+
+KNOWN_FACE_FILE = "known_faces/saikrishna.jpg"
+
+GREET_INTERVAL = 60
+
+KNOWN_CAPTURE_DIR = "captures"
+UNKNOWN_CAPTURE_DIR = "unknown_faces"
+LOG_DIR = "logs"
+
+# =====================================
+# CREATE DIRECTORIES
+# =====================================
+
+os.makedirs(KNOWN_CAPTURE_DIR, exist_ok=True)
+os.makedirs(UNKNOWN_CAPTURE_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# =====================================
+# MEMORY MANAGEMENT
+# Delete files older than 30 days
+# =====================================
+
+def cleanup_old_files(folder, days=30):
+
+    now = time.time()
+
+    for file in os.listdir(folder):
+
+        path = os.path.join(folder, file)
+
+        if os.path.isfile(path):
+
+            age = now - os.path.getmtime(path)
+
+            if age > days * 24 * 60 * 60:
+
+                os.remove(path)
+                print("Deleted:", path)
+
+cleanup_old_files(KNOWN_CAPTURE_DIR)
+cleanup_old_files(UNKNOWN_CAPTURE_DIR)
+
+# =====================================
+# LOAD KNOWN FACE
+# =====================================
+
+known_image = face_recognition.load_image_file(
+    KNOWN_FACE_FILE
+)
+
+known_faces = face_recognition.face_encodings(
+    known_image
+)
+
+if len(known_faces) == 0:
+
+    print("ERROR: No face found in known_faces/saikrishna.jpg")
+    exit(1)
+
+known_encoding = known_faces[0]
+
+known_encodings = [known_encoding]
+known_names = ["Saikrishna"]
+
+print("Known face loaded successfully")
+
+# =====================================
+# LOAD YOLO MODEL
+# =====================================
+
+model = YOLO("yolov8n.pt")
+
+print("YOLO model loaded")
+
+# =====================================
+# OPEN RTSP STREAM
+# =====================================
+
+cap = cv2.VideoCapture(
+    RTSP_URL,
+    cv2.CAP_FFMPEG
+)
+
+if not cap.isOpened():
+
+    print("ERROR: Failed to open RTSP stream")
+    exit(1)
+
+print("RTSP stream connected")
+
+# =====================================
+# VARIABLES
+# =====================================
+
+last_greet = {}
+frame_count = 0
+
+# =====================================
+# MAIN LOOP
+# =====================================
+
+while True:
+
+    ret, frame = cap.read()
+
+    if not ret:
+        continue
+
+    frame_count += 1
+
+    # Process every 10th frame
+    if frame_count % 10 != 0:
+        continue
+
+    # -----------------------------
+    # YOLO PERSON DETECTION
+    # -----------------------------
+
+    results = model(
+        frame,
+        verbose=False
+    )
+
+    person_found = False
+
+    for box in results[0].boxes:
+
+        cls = int(box.cls)
+
+        if model.names[cls] == "person":
+
+            person_found = True
+            break
+
+    if not person_found:
+        continue
+
+    # -----------------------------
+    # FACE DETECTION
+    # -----------------------------
+
+    rgb = cv2.cvtColor(
+        frame,
+        cv2.COLOR_BGR2RGB
+    )
+
+    face_locations = face_recognition.face_locations(
+        rgb
+    )
+
+    print("Faces detected:", len(face_locations))
+
+    face_encodings = face_recognition.face_encodings(
+        rgb,
+        face_locations
+    )
+
+    # -----------------------------
+    # FACE RECOGNITION
+    # -----------------------------
+
+    for encoding in face_encodings:
+
+        distance = face_recognition.face_distance(
+            known_encodings,
+            encoding
+        )
+
+        print("Distance:", distance)
+
+        matches = face_recognition.compare_faces(
+            known_encodings,
+            encoding,
+            tolerance=0.8
+        )
+
+        print("Matches:", matches)
+
+        # -------------------------
+        # KNOWN PERSON
+        # -------------------------
+
+        if True in matches:
+
+            idx = matches.index(True)
+
+            name = known_names[idx]
+
+            print(f"Hello {name}")
+
+            if (
+                name not in last_greet
+                or time.time() - last_greet[name] > GREET_INTERVAL
+            ):
+
+                # Voice greeting
+                os.system(
+                    f'espeak "Hello {name}"'
+                )
+
+                # Save image
+                filename = (
+                    f"{KNOWN_CAPTURE_DIR}/"
+                    f"{name}_{int(time.time())}.jpg"
+                )
+
+                cv2.imwrite(
+                    filename,
+                    frame
+                )
+
+                print("Saved:", filename)
+
+                # Attendance log
+                with open(
+                    "logs/attendance.log",
+                    "a"
+                ) as logfile:
+
+                    logfile.write(
+                        f"{time.ctime()} : {name}\n"
+                    )
+
+                last_greet[name] = time.time()
+
+        # -------------------------
+        # UNKNOWN PERSON
+        # -------------------------
+
+        else:
+
+            print("Unknown person detected")
+
+            filename = (
+                f"{UNKNOWN_CAPTURE_DIR}/"
+                f"unknown_{int(time.time())}.jpg"
+            )
+
+            cv2.imwrite(
+                filename,
+                frame
+            )
+
+            print("Saved:", filename)
+
+cap.release()

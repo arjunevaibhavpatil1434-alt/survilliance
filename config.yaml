@@ -1,0 +1,38 @@
+# Central configuration for the surveillance pipeline.
+# Secrets (Telegram token, chat id) live in .env, not here - see .env.example.
+
+camera:
+  # This board's own CSI camera (ov5647). source_ip/udp_port are unused now
+  # that camera_rtsp_server.py captures it directly via libcamerasrc - kept
+  # for config_loader compatibility.
+  source_ip: 192.168.88.157
+  udp_port: 5000
+
+stream:
+  # camera_rtsp_server.py (see systemd/init.d camera-rtsp) runs locally and
+  # serves the CSI camera as RTSP directly via GStreamer's libcamerasrc,
+  # standing in for mediamtx (not available on this board's image - no
+  # package manager/compiler to install it, and no separate camera device
+  # pushing a feed in). Readers (recognize_rtsp.py, the dashboard) must
+  # talk to this local RTSP server, not to the camera directly.
+  rtsp_host: 127.0.0.1
+  rtsp_port: 8554
+  path: cam02
+
+paths:
+  base_dir: /home/server/sur-floders
+  known_faces_dir: known_faces
+  unknown_faces_dir: unknown_faces
+  logs_dir: logs
+  db_file: faces.db
+
+recognition:
+  cooldown_seconds: 30
+  tolerance: 0.55
+
+dashboard:
+  host: 0.0.0.0
+  port: 8080
+
+telegram:
+  enabled: true

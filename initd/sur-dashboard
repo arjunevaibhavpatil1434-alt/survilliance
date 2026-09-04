@@ -1,0 +1,51 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          sur-dashboard
+# Required-Start:    $network fix-clock
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:
+# Short-Description: Surveillance dashboard (dashboard/app.py)
+### END INIT INFO
+
+NAME=sur-dashboard
+PIDFILE=/var/run/$NAME.pid
+DAEMON=/usr/bin/python3
+DAEMON_ARGS=-u
+SCRIPT=/home/server/sur-floders/dashboard/app.py
+WORKDIR=/home/server/sur-floders/dashboard
+LOG=/home/server/sur-floders/logs/sur-dashboard.log
+
+start() {
+    echo "Starting $NAME..."
+    # BusyBox start-stop-daemon's --background redirects stdio itself and
+    # ignores this shell's own >>$LOG redirection, so route output inside
+    # a wrapper shell instead of relying on the outer redirect.
+    start-stop-daemon --start --background --make-pidfile --pidfile $PIDFILE \
+        --exec /bin/sh -- -c "exec $DAEMON $DAEMON_ARGS $SCRIPT >> $LOG 2>&1"
+}
+
+stop() {
+    echo "Stopping $NAME..."
+    start-stop-daemon --stop --pidfile $PIDFILE --retry 5
+    rm -f $PIDFILE
+}
+
+case "$1" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; sleep 1; start ;;
+  status)
+    if [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
+        echo "$NAME is running (pid $(cat $PIDFILE))"
+    else
+        echo "$NAME is not running"
+        exit 1
+    fi
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+exit 0
